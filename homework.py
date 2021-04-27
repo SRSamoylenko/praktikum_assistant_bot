@@ -2,6 +2,7 @@ import logging
 import os
 import time
 from enum import Enum
+from logging.handlers import RotatingFileHandler
 from typing import Dict, NewType
 
 import requests
@@ -13,7 +14,9 @@ load_dotenv()
 PRAKTIKUM_TOKEN = os.getenv('PRAKTIKUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-LOG_FORMAT = '%(asctime)s, %(levelname)s, %(message)s, %(name)s'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_FILE_FORMAT = '%(asctime)s, %(levelname)s, %(message)s, %(name)s'
+LOG_CONSOLE_FORMAT = '%(levelname)s, %(message)s, %(name)s'
 
 
 class HomeworkStatus(Enum):
@@ -28,8 +31,22 @@ Homeworks = NewType('Homeworks', Dict)
 
 logging.basicConfig(
     level=logging.DEBUG,
-    format=LOG_FORMAT,
+    format=LOG_CONSOLE_FORMAT,
 )
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+handler = RotatingFileHandler(
+    BASE_DIR + f'/{__name__}.log',
+    maxBytes=50000000,
+    backupCount=5,
+)
+handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter(LOG_FILE_FORMAT)
+handler.setFormatter(formatter)
+
+logger.addHandler(handler)
 
 
 def parse_homework_status(homework: HomeworkData) -> str:
@@ -62,12 +79,12 @@ def get_homework_statuses(current_timestamp: int) -> Homeworks:
 
 
 def send_message(message, bot_client):
-    logging.info('Отправка сообщения')
+    logger.info('Отправка сообщения')
     return bot_client.send_message(CHAT_ID, message)
 
 
 def main():
-    logging.debug('Запуск бота')
+    logger.debug('Запуск бота')
     bot_client = telegram.Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time())
 
@@ -86,7 +103,7 @@ def main():
             time.sleep(300)
 
         except Exception as e:
-            logging.exception(e)
+            logger.exception(e)
             send_message(f'Бот столкнулся с ошибкой: {e}', bot_client)
             time.sleep(5)
 
