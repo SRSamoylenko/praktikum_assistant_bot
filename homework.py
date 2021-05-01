@@ -52,6 +52,7 @@ HOMEWORK_VERDICTS = {
     'error': 'Ответ не содержит информации о статусе работы.',
 }
 TIME_TO_SLEEP = 300
+EXCEPTION_TIME_TO_SLEEP = 30
 
 
 HomeworkData = NewType('HomeworkData', Dict)
@@ -129,7 +130,7 @@ def main():
         except Exception as e:
             logger.exception(e)
             send_message(f'Бот столкнулся с ошибкой: {e}', bot_client)
-            time.sleep(5)
+            time.sleep(EXCEPTION_TIME_TO_SLEEP)
 
 
 if __name__ == '__main__':
