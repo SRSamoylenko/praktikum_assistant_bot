@@ -1,96 +1,61 @@
-import logging
+import logging.config
 import os
 import time
-from logging.handlers import RotatingFileHandler
-from typing import Dict, NewType
 
 import requests
 import telegram
 from dotenv import load_dotenv
+from pydantic import ValidationError
+from requests.exceptions import ConnectionError
 
+from config import EXCEPTION_TIME_TO_SLEEP, LOGGING_PARAMS, TIME_TO_SLEEP
+from constants import HOMEWORK_VERDICTS
+from schemas import HomeworkData, Homeworks
+
+logging.config.dictConfig(LOGGING_PARAMS)
 load_dotenv()
-
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_FILE_DIR = os.path.join(BASE_DIR, f'{__name__}.log')
-LOG_FILE_FORMAT = '%(asctime)s, %(levelname)s, %(message)s, %(name)s'
-LOG_CONSOLE_FORMAT = '%(levelname)s, %(message)s, %(name)s'
-
-logging.basicConfig(
-    level=logging.DEBUG,
-    format=LOG_CONSOLE_FORMAT,
-)
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
-handler = RotatingFileHandler(
-    LOG_FILE_DIR,
-    maxBytes=50000000,
-    backupCount=5,
-)
-handler.setLevel(logging.DEBUG)
-formatter = logging.Formatter(LOG_FILE_FORMAT)
-handler.setFormatter(formatter)
-
-logger.addHandler(handler)
 
 try:
     PRAKTIKUM_TOKEN = os.environ['PRAKTIKUM_TOKEN']
     TELEGRAM_TOKEN = os.environ['TELEGRAM_TOKEN']
     CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 except KeyError as e:
-    logger.exception(f'Переменная окружения {e} не найдена. '
-                     f'Запуск бота остановлен.')
-
-HOMEWORK_VERDICTS = {
-    'approved': ('У вас проверили работу "{homework_name}"!\n\n'
-                 'Ревьюеру всё понравилось, '
-                 'можно приступать к следующему уроку.'),
-    'rejected': ('У вас проверили работу "{homework_name}"!\n\n'
-                 'К сожалению в работе нашлись ошибки.'),
-    'reviewing': 'Работа {homework_name} взята на проверку.',
-    'error': 'Ответ не содержит информации о статусе работы.',
-}
-TIME_TO_SLEEP = 300
-EXCEPTION_TIME_TO_SLEEP = 30
+    logging.exception(f'Переменная окружения {e} не найдена. '
+                      f'Запуск бота остановлен.')
+    raise
 
 
-HomeworkData = NewType('HomeworkData', Dict)
-
-Homeworks = NewType('Homeworks', Dict)
-
-
-def parse_homework_status(homework: HomeworkData) -> str:
+def parse_homework_status(homework: dict) -> str:
     """Проверяет статус работы.
     Принимает на вход словарь с данными о домашней работе,
     возвращает строку, сообщающую о статусе работы.
     """
-    homework_name = None
-    status = 'error'
-    result = 'Ошибка: Ответ содержит неизвестный статус'
-
+    logging.debug('Парсинг домашней работы.')
     try:
+        HomeworkData.parse_obj(homework)
         homework_name = homework['homework_name']
         status = homework['status']
-    except KeyError as e:
-        logger.exception(f'Ответ не содержит поля {e}.')
+    except ValidationError:
+        logging.exception('Структура входных данных '
+                          'не соответствует ожидаемой.')
+    result = 'Статус работы изменился. Ответ содержит неизвестный статус'
 
     try:
         result = HOMEWORK_VERDICTS[status].format(homework_name=homework_name)
     except KeyError as e:
-        logger.exception(f'Ответ содержит неизвестный статус: {e}')
+        logging.warning(f'Ответ содержит неизвестный статус: {e}')
 
     return result
 
 
-def get_homework_statuses(current_timestamp: int) -> Homeworks:
+def get_homework_statuses(current_timestamp: int) -> dict:
     """Возвращает словарь c текущей датой и списком домашних работ,
     статус которых изменился с момента current_timestamp.
     """
+    logging.debug('Запрос статуса домашних работ.')
     params = {'from_date': current_timestamp}
     headers = {'Authorization': f'OAuth {PRAKTIKUM_TOKEN}'}
-    result = {}
+    result = {'homeworks': [], 'current_date': None}
 
     try:
         homework_statuses = requests.get(
@@ -98,46 +63,63 @@ def get_homework_statuses(current_timestamp: int) -> Homeworks:
             params=params,
             headers=headers,
         )
-        homework_statuses.raise_for_status()
         result = homework_statuses.json()
-    except requests.exceptions.HTTPError:
-        logger.exception(f'Сервер вернул ответ: {e}.')
+        Homeworks.parse_obj(result)
+    except KeyError:
+        logging.exception('Oтвет не содержит поля json.')
+    except ValidationError:
+        logging.exception('Сервер Яндекс.Практикума '
+                          'не вернул ожидаемый ответ.')
+    except ConnectionError:
+        logging.exception('Не удалось соединиться '
+                          'с сервером Яндекс.Практикума.')
+    except Exception as e:
+        logging.exception(f'Бот столкнулся с ошибкой '
+                          f'при запросе статуса домашних работ: {e}')
 
     return result
 
 
 def send_message(message: str, bot_client: telegram.Bot) -> telegram.Message:
-    """"""
-    logger.info('Отправка сообщения')
-
-    return bot_client.send_message(CHAT_ID, message)
+    """Отправляет сообщение пользователю."""
+    logging.info('Отправка сообщения')
+    while True:
+        try:
+            return bot_client.send_message(CHAT_ID, message)
+        except Exception as e:
+            logging.exception(f'Возникла ошибка при отправке сообщения: {e}')
+            time.sleep(EXCEPTION_TIME_TO_SLEEP)
 
 
 def main():
-    logger.debug('Запуск бота')
+    logging.debug('Запуск бота')
     try:
         bot_client = telegram.Bot(token=TELEGRAM_TOKEN)
     except telegram.error.InvalidToken:
-        logger.exception('Передан невалидный токен телеграм.')
+        logging.exception('Передан невалидный токен телеграм. '
+                          'Запуск бота остановлен.')
+        raise
+    except telegram.error.NetworkError:
+        logging.exception('Проблема с соединением. Запуск бота остановлен.')
+        raise
+    except telegram.error.TelegramError:
+        logging.exception('Проблема со стороны сервера Telegram. '
+                          'Запуск бота остановлен.')
+        raise
+    except Exception as e:
+        logging.exception(f'Ошибка {e}. Запуск бота остановлен.')
+        raise
     current_timestamp = int(time.time())
 
     while True:
-        try:
-            updated_statuses = get_homework_statuses(current_timestamp)
-            if updated_statuses.get('homeworks'):
-                last_homework = updated_statuses.get('homeworks')[0]
-                message = parse_homework_status(last_homework)
-                send_message(message, bot_client)
-            current_timestamp = updated_statuses.get(
-                'current_date',
-                current_timestamp
-            )
-            time.sleep(TIME_TO_SLEEP)
-
-        except Exception as e:
-            logger.exception(e)
-            send_message(f'Бот столкнулся с ошибкой: {e}', bot_client)
-            time.sleep(EXCEPTION_TIME_TO_SLEEP)
+        updated_statuses = get_homework_statuses(current_timestamp)
+        if updated_statuses['homeworks']:
+            last_homework = updated_statuses['homeworks'][0]
+            message = parse_homework_status(last_homework)
+            send_message(message, bot_client)
+        current_timestamp = (updated_statuses['current_date']
+                             or current_timestamp)
+        time.sleep(TIME_TO_SLEEP)
 
 
 if __name__ == '__main__':
