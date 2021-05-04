@@ -12,6 +12,7 @@ load_dotenv()
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_FILE_DIR = os.path.join(BASE_DIR, f'{__name__}.log')
 LOG_FILE_FORMAT = '%(asctime)s, %(levelname)s, %(message)s, %(name)s'
 LOG_CONSOLE_FORMAT = '%(levelname)s, %(message)s, %(name)s'
 
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 handler = RotatingFileHandler(
-    BASE_DIR + f'/{__name__}.log',
+    LOG_FILE_DIR,
     maxBytes=50000000,
     backupCount=5,
 )
@@ -97,21 +98,27 @@ def get_homework_statuses(current_timestamp: int) -> Homeworks:
             params=params,
             headers=headers,
         )
+        homework_statuses.raise_for_status()
         result = homework_statuses.json()
-    except AttributeError as e:
-        logger.exception(f'homework_statuses не имеет аттрибута {e}.')
+    except requests.exceptions.HTTPError:
+        logger.exception(f'Сервер вернул ответ: {e}.')
 
     return result
 
 
-def send_message(message, bot_client):
+def send_message(message: str, bot_client: telegram.Bot) -> telegram.Message:
+    """"""
     logger.info('Отправка сообщения')
+
     return bot_client.send_message(CHAT_ID, message)
 
 
 def main():
     logger.debug('Запуск бота')
-    bot_client = telegram.Bot(token=TELEGRAM_TOKEN)
+    try:
+        bot_client = telegram.Bot(token=TELEGRAM_TOKEN)
+    except telegram.error.InvalidToken:
+        logger.exception('Передан невалидный токен телеграм.')
     current_timestamp = int(time.time())
 
     while True:
