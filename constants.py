@@ -6,3 +6,6 @@ HOMEWORK_VERDICTS = {
                  'К сожалению в работе нашлись ошибки.'),
     'reviewing': 'Работа {homework_name} взята на проверку.',
 }
+
+PRAKTIKUM_API_URL = ('https://praktikum.yandex.ru/api/'
+                     'user_api/homework_statuses/')
