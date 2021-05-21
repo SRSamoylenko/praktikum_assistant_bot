@@ -113,7 +113,7 @@ def main():
         updated_statuses = get_homework_statuses(current_timestamp)
         if updated_statuses.homeworks:
             logging.info('Имеются работы с обновленным статусом.')
-            last_homework = updated_statuses['homeworks'][0]
+            last_homework = updated_statuses.homeworks[0]
             message = parse_homework_status(last_homework)
             send_message(message, bot_client)
         else:
